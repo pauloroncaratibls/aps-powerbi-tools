@@ -3,29 +3,45 @@ section DesignPropsConnector;
 
 SECRETS = Json.Document(Extension.Contents("secrets.json"));
 REDIRECT_URI = "https://oauth.powerbi.com/views/oauthredirect.html";
-PAGE_SIZE = 512; // Max number of object IDs to request properties for in one request (must be less than 1000)
+PAGE_SIZE = 512;
 
+// Max number of object IDs to request properties for in one request (must be less than 1000)
 [DataSource.Kind = "DesignPropsConnector", Publish = "DesignPropsConnector.Publish"]
 shared DesignPropsConnector.Contents = (urn as text, region as text) as table =>
     let
-        views = DesignPropsConnector.GetViews(urn, region), // Get the list of all viewables available for the input URN
-        firstView = List.First(views), // Get the first viewable
-        objectTree = DesignPropsConnector.GetTree(urn, firstView[guid], region), // Get the hierarchy of objects in the viewable
-        flattenedObjectTree = FlattenObjectTree(objectTree), // Flatten the object hierarchy into a table
-        objectIdPages = List.Split(Table.Column(flattenedObjectTree, "objectid"), PAGE_SIZE), // Split object IDs into pages of predefined size
-        propertyPages = List.Transform(objectIdPages, each DesignPropsConnector.GetProperties(urn, firstView[guid], _, region)), // Retrieve properties for each page
-        properties = Table.FromRecords(List.Union(propertyPages)), // Combine paged results into a single table
-        joinedTables = Table.Join(properties, "objectid", flattenedObjectTree, "objectid"), // Join flattened tree and properties tables
-        selectedColumns = Table.SelectColumns(joinedTables, {"objectid", "externalId", "hierarchy", "name", "is_group", "properties"})
+        views = DesignPropsConnector.GetViews(urn, region),
+        // Get the list of all viewables available for the input URN
+        firstView = List.First(views),
+        // Get the first viewable
+        objectTree = DesignPropsConnector.GetTree(urn, firstView[guid], region),
+        // Get the hierarchy of objects in the viewable
+        flattenedObjectTree = FlattenObjectTree(objectTree),
+        // Flatten the object hierarchy into a table
+        objectIdPages = List.Split(Table.Column(flattenedObjectTree, "objectid"), PAGE_SIZE),
+        // Split object IDs into pages of predefined size
+        propertyPages = List.Transform(
+            objectIdPages, each DesignPropsConnector.GetProperties(urn, firstView[guid], _, region)
+        ),
+        // Retrieve properties for each page
+        properties = Table.FromRecords(List.Union(propertyPages)),
+        // Combine paged results into a single table
+        joinedTables = Table.Join(properties, "objectid", flattenedObjectTree, "objectid"),
+        // Join flattened tree and properties tables
+        selectedColumns = Table.SelectColumns(
+            joinedTables, {"objectid", "externalId", "hierarchy", "name", "is_group", "properties"}
+        )
     in
-        Table.RenameColumns(selectedColumns, {
-            {"objectid", "Object ID"},
-            {"externalId", "External ID"},
-            {"name", "Name"},
-            {"hierarchy", "Hierarchy"},
-            {"is_group", "Is Group"},
-            {"properties", "Properties"}
-        });
+        Table.RenameColumns(
+            selectedColumns,
+            {
+                {"objectid", "Object ID"},
+                {"externalId", "External ID"},
+                {"name", "Name"},
+                {"hierarchy", "Hierarchy"},
+                {"is_group", "Is Group"},
+                {"properties", "Properties"}
+            }
+        );
 
 DesignPropsConnector = [
     Authentication = [
@@ -72,7 +88,11 @@ TokenMethod = (code) =>
                 Headers = [
                     #"Content-Type" = "application/x-www-form-urlencoded",
                     #"Accept" = "application/json",
-                    #"Authorization" = "Basic " & Binary.ToText(Text.ToBinary(SECRETS[APS_CLIENT_ID] & ":" & SECRETS[APS_CLIENT_SECRET]), BinaryEncoding.Base64)
+                    #"Authorization" = "Basic "
+                        & Binary.ToText(
+                            Text.ToBinary(SECRETS[APS_CLIENT_ID] & ":" & SECRETS[APS_CLIENT_SECRET]),
+                            BinaryEncoding.Base64
+                        )
                 ]
             ]
         )
@@ -92,7 +112,11 @@ RefreshToken = (dataSourcePath, refreshToken) =>
                 Headers = [
                     #"Content-Type" = "application/x-www-form-urlencoded",
                     #"Accept" = "application/json",
-                    #"Authorization" = "Basic " & Binary.ToText(Text.ToBinary(SECRETS[APS_CLIENT_ID] & ":" & SECRETS[APS_CLIENT_SECRET]), BinaryEncoding.Base64)
+                    #"Authorization" = "Basic "
+                        & Binary.ToText(
+                            Text.ToBinary(SECRETS[APS_CLIENT_ID] & ":" & SECRETS[APS_CLIENT_SECRET]),
+                            BinaryEncoding.Base64
+                        )
                 ]
             ]
         )
@@ -173,22 +197,32 @@ DesignPropsConnector.GetProperties = (urn as text, guid as text, objectIds as li
                 "modelderivative/v2/regions/eu"
             else
                 error "Unsupported region.",
-        url = "https://developer.api.autodesk.com/" & base_path & "/designdata/" & urn & "/metadata/" & guid & "/properties:query",
+        url = "https://developer.api.autodesk.com/"
+            & base_path
+            & "/designdata/"
+            & urn
+            & "/metadata/"
+            & guid
+            & "/properties:query",
         headers = [#"Content-Type" = "application/json"],
-        payload = Json.FromValue([
-            pagination = [
-                limit = List.Count(objectIds)
-            ],
-            query = [
-                #"$in" = { "objectid" } & objectIds
+        payload = Json.FromValue(
+            [
+                pagination = [
+                    limit = List.Count(objectIds)
+                ],
+                query = [
+                    #"$in" = {"objectid"} & objectIds
+                ]
             ]
-        ]),
-        response = Web.Contents(url, [
-            ManualStatusHandling = {202},
-            IsRetry = true,
-            Headers = headers,
-            Content = payload
-        ]),
+        ),
+        response = Web.Contents(
+            url, [
+                ManualStatusHandling = {202},
+                IsRetry = true,
+                Headers = headers,
+                Content = payload
+            ]
+        ),
         metadata = Value.Metadata(response),
         json =
             if metadata[Response.Status] = 202 then
@@ -203,11 +237,16 @@ FlattenObjectTree = (tree as record) as table =>
     let
         FlattenNode = (node as record, hierarchy as list) =>
             if Record.HasFields(node, "objects") then
-                let entry = [ objectid = node[objectid], hierarchy = hierarchy, is_group = true ]
-                in {entry} & List.Combine(List.Transform(node[objects], each @FlattenNode(_, hierarchy & {node[name]})))
+                let
+                    entry = [objectid = node[objectid], hierarchy = hierarchy, is_group = true]
+                in
+                    {entry}
+                        & List.Combine(List.Transform(node[objects], each @FlattenNode(_, hierarchy & {node[name]})))
             else
-                let entry = [ objectid = node[objectid], hierarchy = hierarchy, is_group = false ]
-                in {entry},
+                let
+                    entry = [objectid = node[objectid], hierarchy = hierarchy, is_group = false]
+                in
+                    {entry},
         flattened = FlattenNode(tree, {})
     in
         Table.FromRecords(flattened);
